@@ -1,0 +1,11 @@
+# 运行产物，不入库
+analysis-*.json
+last-analysis.json
+test-report.md
+*.mp4
+*.mov
+*.mkv
+*.webm
+tmp/
+downloads/
+.env
