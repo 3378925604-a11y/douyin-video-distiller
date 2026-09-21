@@ -59,8 +59,10 @@ $env:OMNI_MODEL_PATH="D:\Models\Qwen2.5-Omni-7B"      # Windows PowerShell
 ```bash
 python scripts/analyze_omni.py video.mp4 "请完整分析视频并输出带时间戳的转录、画面文字、时间线、明确证据、模型归纳和待确认事项。"
 
-# 口播类视频：连音轨一起听
-python scripts/analyze_omni.py video.mp4 "把口播逐字转写" --audio
+# 音轨默认已输入（口播转写开箱即用）；纯画面任务加 --no-audio 关闭
+python scripts/analyze_omni.py video.mp4 "把口播逐字转写"
+
+# 输出复读严重时加 --ngram-rep 4（硬禁 4-gram 复读）
 
 # 纯音频文件会自动走音频通道
 python scripts/analyze_omni.py audio.wav "这段音频里有人说话吗？"
@@ -89,7 +91,7 @@ status: draft
 
 - 抖音反爬持续升级：CDP 法依赖浏览器登录态；Chromium/Edge 136+ 禁止在默认 profile 上开调试端口，绕过法见 `douyin-video-download/SKILL.md` 第 3 步。仍拿不到视频时如实报告，可手动保存视频后走本地文件流程。
 - 推理速度取决于显卡：RTX 4060 Laptop（8G）下 fps=1、输出 512 token 约需 2 分钟；纯音频约 30 秒。
-- 模型**会幻觉**：长输出尾部可能自续对话轮次、编造不存在的时间点。脚本已加 `repetition_penalty` 压制，但仍应只采信前半段，重要内容回看原视频核对（skill 已强制标注"待确认事项"）。
+- 模型**会幻觉**：约第 10 秒输出起可能退化复读、吐 `Human:` 之类角色标签。脚本已默认 `repetition_penalty=1.1`，仍严重时加 `--ngram-rep 4`；采信前先截断复读段。**覆盖校验**：输出时间戳没到视频末尾的，缺口必须标"未分析"——短视频卡死多半是输入 token 超预算（看 `[input] tokens=` 行），先 `--max-pixels 100000`，不是降 fps。
 - 画面硬字幕识别可靠；**模型自报的分段时间戳不可信**（实测偏差可达 30s），精确时间轴要用 ffmpeg 按画面字幕实测校正。
 
 ## 可选：云端后端

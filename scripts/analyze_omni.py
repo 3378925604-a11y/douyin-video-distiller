@@ -6,14 +6,16 @@
 可选同时输入视频音轨（--audio）。
 
 依赖：
-  torch / transformers>=4.57 / bitsandbytes / qwen-omni-utils / torchvision>=0.19
+  torch(cuda) / transformers>=4.57 / bitsandbytes / qwen-omni-utils / torchvision / accelerate
+  / audioread（qwen_omni_utils 传递依赖）/ decord（视频解码后端；torchvision>=0.26 已删
+  read_video，不装 decord 或 torchcodec 会直接崩）
 模型：
   Qwen2.5-Omni-7B 的 fp16 权重（本地目录），只加载 thinker 部分
 
 用法:
   python analyze_omni.py video.mp4
   python analyze_omni.py video.mp4 "只抄录画面里的所有字幕文字" --fps 2 --max-new 384
-  python analyze_omni.py video.mp4 "把口播逐字转写" --audio
+  python analyze_omni.py video.mp4 "把口播逐字转写"          # 音轨默认已输入，--no-audio 关闭
   python analyze_omni.py audio.wav "这段音频里有人说话吗？"     # 自动走纯音频通道
 
 环境变量:
@@ -22,8 +24,12 @@
   OMNI_MAX_NEW      最大生成 token，默认 512
   OMNI_MAX_PIXELS   单帧像素上限，用于压显存（如 100000）
   OMNI_REP_PEN      重复惩罚，默认 1.1（greedy 输出尾部会退化，靠它压）
-  OMNI_USE_AUDIO    1 = 同时输入音轨，默认 0
+  OMNI_NGRAM_REP    no_repeat_ngram_size，默认 0；输出复读严重时设 4
+  OMNI_USE_AUDIO    1 = 输入音轨（脚本默认已开，0 关闭）
   OMNI_SYS          系统提示词
+
+输出可信度：模型约在生成 10s+ 后可能退化复读、编造角色标签；输出未覆盖全时间轴
+时必须按 SKILL.md 要求在结果里标注缺口，不要把"没看"当"没有"。
 """
 import argparse
 import os
@@ -50,16 +56,21 @@ def main():
     ap.add_argument("--max-new", type=int, default=int(os.environ.get("OMNI_MAX_NEW", "512")))
     ap.add_argument("--max-pixels", type=int, default=None)
     ap.add_argument("--rep-pen", type=float, default=float(os.environ.get("OMNI_REP_PEN", "1.1")))
+    ap.add_argument("--ngram-rep", type=int, default=int(os.environ.get("OMNI_NGRAM_REP", "0")),
+                    help="no_repeat_ngram_size，>0 可硬禁 n-gram 复读（如 4），0=关闭")
     ap.add_argument("--sys", default=os.environ.get("OMNI_SYS", "You are a helpful assistant."))
     ap.add_argument("--audio", action="store_true",
-                    default=os.environ.get("OMNI_USE_AUDIO", "0") == "1",
-                    help="视频以外的音轨也一并输入")
+                    default=os.environ.get("OMNI_USE_AUDIO", "1") == "1",
+                    help="视频以外的音轨也一并输入（默认开：口播类视频不加等于主动放弃全部语音信息；--no-audio 关闭）")
+    ap.add_argument("--no-audio", dest="audio", action="store_false")
     args = ap.parse_args()
 
     if not args.model:
         sys.exit("缺少模型目录：请设置 OMNI_MODEL_PATH 或用 --model 指定 Qwen2.5-Omni-7B 权重路径。")
     if not os.path.exists(args.media):
         sys.exit("文件不存在: %s" % args.media)
+    if not torch.cuda.is_available():
+        sys.exit("torch 看不到 CUDA 设备：本脚本无 CPU 回退，请检查驱动/装对 cuda 版 torch，不要硬跑。")
 
     from transformers import (
         BitsAndBytesConfig,
@@ -123,9 +134,12 @@ def main():
     t1 = time.time()
     with torch.no_grad():
         # 注意：thinker 模型不接受 return_audio（那是 talker 的参数）
-        out = model.generate(**inputs, use_audio_in_video=args.audio,
-                             max_new_tokens=args.max_new, do_sample=False,
-                             repetition_penalty=args.rep_pen)
+        gen_kw = dict(use_audio_in_video=args.audio,
+                      max_new_tokens=args.max_new, do_sample=False,
+                      repetition_penalty=args.rep_pen)
+        if args.ngram_rep > 0:
+            gen_kw["no_repeat_ngram_size"] = args.ngram_rep
+        out = model.generate(**inputs, **gen_kw)
     dt = time.time() - t1
     n_new = out.shape[-1] - n_tok
     print("[gen] %.1fs  new_tokens=%d  %.1ftok/s  peak=%.2fGB" % (

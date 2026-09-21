@@ -26,7 +26,7 @@ description: 解析抖音分享链接，下载无水印视频和图集。当用�
 5. CDP `Runtime.evaluate` 执行 `document.querySelector('video').currentSrc` → 得到 `douyinvod.com` 真实流地址。
 6. 若 `currentSrc` 是 `blob:`（MSE 分段流）：改用 CDP **Network 域**监听收集 `douyinvod.com` 的 media 请求（视频、音频是分离的两条流），分别下载后 `ffmpeg -c copy` 合并。
 7. 下载时带浏览器 UA + `Referer: https://www.douyin.com/`；下完用 ffprobe 核对分辨率/时长/编码。
-8. **收尾**：关闭调试实例并正常重启浏览器；把保存路径告知用户；不输出、不留存签名直链和 Cookie。
+8. **收尾**：关闭调试实例并正常重启浏览器；把保存路径告知用户；不输出、不留存签名直链和 Cookie。**用了 junction 的，收尾必须 `rmdir C:\edgeprof` 删掉联接本身——删前用 `fsutil reparsepoint query C:\edgeprof` 或 `Get-Item C:\edgeprof` 确认 Attributes 含 ReparsePoint；严禁 `rm -rf` / `Remove-Item -Recurse`（那会顺着联接删掉用户真实的 Edge 配置，等于毁掉他所有浏览器 profile）。**
 
 ## 输出
 
