@@ -3,7 +3,7 @@
 本地视频理解 —— Qwen2.5-Omni-7B（Thinker-only + bitsandbytes NF4 4bit）
 
 原生视频通道：把视频按 fps 采样成**带时间戳的帧序列**送进模型，不是抽帧当图片看。
-可选同时输入视频音轨（--audio）。
+默认同时输入视频音轨；音轨链路失败会自动降级为纯画面通道（stderr 有 [warn]）。
 
 依赖：
   torch(cuda) / transformers>=4.57 / bitsandbytes / qwen-omni-utils / torchvision / accelerate
@@ -22,7 +22,9 @@
   OMNI_MODEL_PATH   Qwen2.5-Omni-7B 权重目录（必填，或用 --model）
   OMNI_FPS          采样帧率，默认 1
   OMNI_MAX_NEW      最大生成 token，默认 512
-  OMNI_MAX_PIXELS   单帧像素上限，用于压显存（如 100000）
+  OMNI_MAX_PIXELS   单帧像素上限，默认 100352（=128×28²，qwen_vl_utils 的硬下限，
+                    低于它会断言崩溃；0 = 不传该参数，回到库默认 602112——1080p 帧
+                    不缩放会导致 token 爆炸、慢一个数量级，慎用）
   OMNI_REP_PEN      重复惩罚，默认 1.1（greedy 输出尾部会退化，靠它压）
   OMNI_NGRAM_REP    no_repeat_ngram_size，默认 0；输出复读严重时设 4
   OMNI_USE_AUDIO    1 = 输入音轨（脚本默认已开，0 关闭）
@@ -54,7 +56,9 @@ def main():
                     help="Qwen2.5-Omni-7B 权重目录（也可用 OMNI_MODEL_PATH）")
     ap.add_argument("--fps", type=float, default=float(os.environ.get("OMNI_FPS", "1")))
     ap.add_argument("--max-new", type=int, default=int(os.environ.get("OMNI_MAX_NEW", "512")))
-    ap.add_argument("--max-pixels", type=int, default=None)
+    ap.add_argument("--max-pixels", type=int,
+                    default=int(os.environ.get("OMNI_MAX_PIXELS", "100352")),
+                    help="单帧像素上限，默认 100352（128×28² 硬下限，同时也是有效的压缩值；0=不传）")
     ap.add_argument("--rep-pen", type=float, default=float(os.environ.get("OMNI_REP_PEN", "1.1")))
     ap.add_argument("--ngram-rep", type=int, default=int(os.environ.get("OMNI_NGRAM_REP", "0")),
                     help="no_repeat_ngram_size，>0 可硬禁 n-gram 复读（如 4），0=关闭")
@@ -122,19 +126,36 @@ def main():
     ]
 
     text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    audios, images, videos = process_mm_info(messages, use_audio_in_video=args.audio)
-    inputs = processor(text=text, audio=audios, images=images, videos=videos,
-                       return_tensors="pt", padding=True).to("cuda")
+    use_audio = args.audio
+    try:
+        audios, images, videos = process_mm_info(messages, use_audio_in_video=use_audio)
+        inputs = processor(text=text, audio=audios, images=images, videos=videos,
+                           return_tensors="pt", padding=True).to("cuda")
+    except Exception as e:
+        # 音轨链路依赖（ffmpeg/audioread/decord 等）在部分机器上不全：降级为纯画面通道，
+        # 不让整轮分析挂掉。降级是信息损失，必须在 stderr 里说清楚并在输出中注明无语音证据。
+        if not use_audio:
+            raise
+        print("[warn] 音轨处理失败（%s），自动降级为 --no-audio 纯画面通道；"
+              "本次输出不含任何语音信息。彻底修请补齐 ffmpeg/audioread/decord 后重跑。"
+              % e.__class__.__name__, file=sys.stderr, flush=True)
+        use_audio = False
+        audios, images, videos = process_mm_info(messages, use_audio_in_video=False)
+        inputs = processor(text=text, audio=audios, images=images, videos=videos,
+                           return_tensors="pt", padding=True).to("cuda")
 
     n_tok = inputs["input_ids"].shape[-1]
     print("[input] tokens=%d  vram=%.2fGB" % (
         n_tok, torch.cuda.memory_allocated() / 1024 ** 3), file=sys.stderr, flush=True)
+    if n_tok > 3000:
+        print("[warn] 输入 token 偏大（%d），生成会慢一个数量级；可加大 --max-pixels 压缩力度"
+              "（不得低于 100352 下限）或降低 --fps。" % n_tok, file=sys.stderr, flush=True)
 
     torch.cuda.reset_peak_memory_stats()
     t1 = time.time()
     with torch.no_grad():
         # 注意：thinker 模型不接受 return_audio（那是 talker 的参数）
-        gen_kw = dict(use_audio_in_video=args.audio,
+        gen_kw = dict(use_audio_in_video=use_audio,
                       max_new_tokens=args.max_new, do_sample=False,
                       repetition_penalty=args.rep_pen)
         if args.ngram_rep > 0:

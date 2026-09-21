@@ -31,7 +31,7 @@ compatibility: '需要本地 Qwen2.5-Omni-7B 权重（约 22GB，4bit 量化后 
 1. 判断输入类型。链接先解析并保存原始链接信息；本地视频记录文件路径、大小、时长和格式；文本直接进入转录蒸馏流程。
 2. 处理抖音链接时，调用已安装的 `douyin-video-download` skill（CDP 登录态提取法），按其文档步骤下载视频到临时目录。不要复制下载器源码，也不要输出视频签名直链、Cookie 或凭据。
 3. 本地模型没有请求体大小上限，但耗时随视频长度和采样帧率线性增长。先记录视频时长：超长视频（>3 分钟）先降低采样帧率（`--fps 0.5`），必要时再用 FFmpeg 切段（每段 ≤150 秒、`scale=720:-2`、CRF 32、AAC 64k），逐段分析后合并结果。
-4. 调用本 skill 自带的本地视觉分析脚本处理视频（fps 默认 1；**音轨默认已输入**，纯画面任务用 `--no-audio` 关；输出复读严重时加 `--ngram-rep 4`）：
+4. 调用本 skill 自带的本地视觉分析脚本处理视频（fps 默认 1；**音轨默认已输入**，若该机器音轨链路依赖不全，脚本会自动降级为纯画面并在 stderr 打 `[warn]`——此时结果不含语音信息，纯画面任务可直接用 `--no-audio` 关；输出复读严重时加 `--ngram-rep 4`）：
    ```bash
    python "<本 skill 目录>/scripts/analyze_omni.py" "<视频文件>" "请完整分析视频并输出带时间戳的转录、画面文字、时间线、明确证据、模型归纳和待确认事项。"
    ```
@@ -79,9 +79,9 @@ status: draft
 - 下载失败：返回"未取得视频"，说明错误类别和下一步，不生成虚假的视频内容；不要删除任何文件。
 - 抖音反爬（只返回壳页/无视频数据）：如实报告，建议用户改用浏览器登录态方式手动获取视频后走本地视频流程。
 - 只有标题或短链接元数据：只能整理元数据，不能声称完成视频蒸馏。
-- 视频过长导致推理超时或显存不足：按执行流程第 3 步降低采样帧率或切段压缩（也可用 `--max-pixels` 压单帧像素），或如实报告未完成。**慢的先兆是输入 token 数不是视频时长**——看脚本 `[input] tokens=` 一行，十几秒的片子也可能因高分辨率喂进几千 token；token 超预算先加 `--max-pixels 100000` 再考虑降 fps。
-- **生成慢约 10 倍（<1 tok/s）时先查 GPU 频率，别怀疑模型**：`nvidia-smi --query-gpu=clocks.sm,clocks.max.sm,power.draw,utilization.gpu --format=csv -l 2` 连续采样；若 SM 频率钉在 300MHz 档不动、无节流标记（clocks_event_reasons.active=0x0），是驱动功耗策略没让 dGPU 升频——NVIDIA 控制面板给 python.exe 设「最高性能优先」，或管理员 `nvidia-smi -lgc 1500,3090`（跑完 `-rgc` 解锁）；笔记本还要查混合显卡/MUX（2026-09-21 同学机 RTX 5060 Laptop 实测案例）。
-- transformers 5.x 提示 "does not apply the per-frame pixel cap"：输入 token 会远超预期，加 `--max-pixels 100000` 收敛。
+- 视频过长导致推理超时或显存不足：按执行流程第 3 步降低采样帧率或切段压缩，或如实报告未完成。**慢的先兆是输入 token 数不是视频时长**——看脚本 `[input] tokens=` 一行，十几秒的片子也可能因高分辨率喂进几千 token（缺省不压像素时 1080p 帧可达 5000+ token，慢一个数量级）。脚本已默认 `--max-pixels 100352`（=128×28²，qwen_vl_utils 的硬下限，**传低于它的值如 100000 会直接断言崩溃**）；还要更快就降 fps，不要往 100352 以下压 max_pixels。
+- **生成慢约 10 倍（<1 tok/s）**：先查上面那条的 token 数，绝大多数"GPU 假性低频"（SM 钉在 300MHz 档）其实是超大输入下的表象，token 正常后再怀疑驱动没升频（NVIDIA 控制面板设「最高性能优先」或 `nvidia-smi -lgc`，笔记本查 MUX）。
+- transformers 5.x 提示 "does not apply the per-frame pixel cap"：输入 token 会远超预期——脚本默认已传 `--max-pixels 100352` 收敛；若被改为 0/未生效，恢复默认即可（不要再传 100000 之类的值，低于 100352 会断言崩溃）。
 - 解码报 `torchvision.io has no attribute 'read_video'`：torchvision≥0.26 已删除该函数，`pip install decord` 即可（qwen_omni_utils 自动优选，无需改代码）。
 - 分析失败、超时、返回空结果或拒绝视频：保留本次下载的视频，明确说明分析未完成，不执行自动删除；如用户允许，可改为"转录 + 抽帧"并明确这不是完整视频理解。
 - 清理失败：如实报告残留文件路径，不重复删除用户原有文件。
