@@ -20,9 +20,8 @@ compatibility: '需要本地 Qwen2.5-Omni-7B 权重（约 22GB，4bit 量化后 
 
 按顺序探测，走第一个能跑的通道；全部不通就向用户要转录文本，**不得凭链接内容瞎编蒸馏结果**：
 
-1. **通道 A · 本地模型**：检查环境变量 `OMNI_MODEL_PATH` 指向的目录里有没有 `config.json` + safetensors 权重，且本机有 ≥8GB 显存（`nvidia-smi`）。三者齐备 → 用 `scripts/analyze_omni.py`。缺权重/缺显存 → 不要试图现场下载 22GB 模型，直接下一通道。
-2. **通道 B · NVIDIA 云端**：检查 `NVIDIA_API_KEY` 环境变量。未设置 → 告知用户去 https://build.nvidia.com 免费注册获取 key 并 `$env:NVIDIA_API_KEY="nvapi-…"`（PowerShell），然后改用 `scripts/analyze.rb`。**云端单次请求体上限 25MB（base64 后）**，必须先用 FFmpeg 压段：每段 ≤150 秒、`scale=720:-2`、CRF 32、AAC 64k，逐段分析后合并。
-3. **通道 C · 用户提供文本**：A/B 都不通时，请用户粘贴抖音自带的图文转录或第三方转文字结果，走纯文本蒸馏流程（质量降级，需在输出里注明"仅基于文本，无画面证据"）。
+1. **通道 A · 本地模型**：检查环境变量 `OMNI_MODEL_PATH` 指向的目录里有没有 `config.json` + safetensors 权重，且本机有 ≥8GB 显存（`nvidia-smi`）。三者齐备 → 用 `scripts/analyze_omni.py`。缺权重 → 引用本 skill README「获取模型权重」一节的直链与命令（hf 官方 / aifasthub / hf-mirror / ModelScope 四选一），权重就绪后回到本步；缺显存 → 下一通道。
+2. **通道 B · 用户提供文本**：A 不通时，请用户粘贴抖音自带的图文转录或第三方转文字结果，走纯文本蒸馏流程（质量降级，需在输出里注明"仅基于文本，无画面证据"）。
 
 下载同理：链接一律按 `douyin-video-download` skill 里的「CDP 登录态提取法」执行（该 skill 唯一路径）；不要尝试 yt-dlp/纯 HTTP 解析/cookie 导出等已被抖音反爬淘汰的做法，用户手动给来本地视频路径则直接进分析。
 

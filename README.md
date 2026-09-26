@@ -1,5 +1,7 @@
 # douyin-video-distiller — 抖音视频蒸馏 Skill
 
+**本地离线跑：抖音链接 → 无水印下载 → 本地 Qwen 视频理解 → 带时间戳知识卡片。Douyin video distiller: link → watermark-free download → on-device Qwen2.5-Omni video understanding → timestamped, citable knowledge cards.** 全程不调第三方云端模型、无额度限制、无请求体上限。
+
 把抖音短视频**一步到位**蒸馏成可检索的知识卡片：带时间戳的原视频证据、模型归纳、关键概念、行动项，直接落盘为 Markdown/Wiki 格式。
 
 支持 Claude Code / OpenCode 等任何读取 `SKILL.md` 规范的 agent。
@@ -25,7 +27,25 @@
 | Python 3.10+ | ✅ | 需 `torch` / `transformers>=4.57` / `bitsandbytes` / `qwen-omni-utils` / `torchvision>=0.19` / `accelerate`（device_map 必需）/ `audioread`（qwen-omni-utils 传递依赖，国内镜像常缺、需走官方 PyPI）/ `decord`（视频解码后端：**torchvision>=0.26 已删除 `read_video`，不装 decord 或 torchcodec 会直接崩**） |
 | 浏览器 + 抖音网页版登录态 | ✅（仅链接下载） | Edge/Chrome 里 www.douyin.com 已登录；本地视频文件不需要 |
 | FFmpeg、curl、Python `websockets` | ✅（仅链接下载） | CDP 提取与流合并用 |
-| 可选：`NVIDIA_API_KEY` | ❌ | 没有本地显卡时走 `scripts/analyze.rb` 云端后端（注意 25MB 请求体上限） |
+
+### 获取模型权重（约 22GB，四种方式任选，手动自动都行）
+
+```bash
+# 方式1 · huggingface 官方（需可访问 huggingface.co）
+hf download Qwen/Qwen2.5-Omni-7B --local-dir ./Qwen2.5-Omni-7B
+
+# 方式2 · aifasthub 国内直链（快，支持断点续传，-C - 即续传）
+HF_ENDPOINT=https://aifasthub.com hf download Qwen/Qwen2.5-Omni-7B --local-dir ./Qwen2.5-Omni-7B
+# 单文件直链格式（浏览器/curl/wget 均可）：
+#   https://aifasthub.com/Qwen/Qwen2.5-Omni-7B/resolve/main/<文件名>
+curl -L -C - -O https://aifasthub.com/Qwen/Qwen2.5-Omni-7B/resolve/main/config.json
+
+# 方式3 · hf-mirror 镜像
+HF_ENDPOINT=https://hf-mirror.com hf download Qwen/Qwen2.5-Omni-7B --local-dir ./Qwen2.5-Omni-7B
+
+# 方式4 · ModelScope（需 `pip install modelscope`）
+modelscope download --model Qwen/Qwen2.5-Omni-7B --local_dir ./Qwen2.5-Omni-7B
+```
 
 设置模型路径：
 
@@ -94,12 +114,6 @@ status: draft
 - 模型**会幻觉**：约第 10 秒输出起可能退化复读、吐 `Human:` 之类角色标签。脚本已默认 `repetition_penalty=1.1`，仍严重时加 `--ngram-rep 4`；采信前先截断复读段。**覆盖校验**：输出时间戳没到视频末尾的，缺口必须标"未分析"——短视频卡死多半是输入 token 超预算（看 `[input] tokens=` 行），先确认 `--max-pixels` 没被关掉，不是降 fps。
 - **音轨链路依赖因机器而异**（ffmpeg/audioread/decord）：缺依赖时脚本不会挂掉，会自动降级为纯画面通道并在 stderr 打 `[warn]`——但这次输出就不含任何语音信息，补齐依赖后重跑才是完整蒸馏。
 - 画面硬字幕识别可靠；**模型自报的分段时间戳不可信**（实测偏差可达 30s），精确时间轴要用 ffmpeg 按画面字幕实测校正。
-
-## 可选：云端后端
-
-仓库里保留了 `scripts/analyze.rb` —— 走 NVIDIA 免费 API（`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`）的旧版实现，
-没有本地显卡时可用（需 `NVIDIA_API_KEY`，仅依赖 Ruby 标准库，注意其 25MB 请求体上限）。
-默认流程走本地 `scripts/analyze_omni.py`。
 
 ## License
 
