@@ -34,6 +34,18 @@
 # 方式1 · huggingface 官方（需可访问 huggingface.co）
 hf download Qwen/Qwen2.5-Omni-7B --local-dir ./Qwen2.5-Omni-7B
 
+## English
+
+**Douyin Video Distiller** — an offline Agent Skill: a Douyin link in, timestamped knowledge cards out.
+
+- Pipeline: link → watermark-free download → local Qwen2.5-Omni video understanding (real frames + audio, not frame-grabbing) → Markdown knowledge cards with timestamped evidence
+- Runs **fully offline** after models are set up; no cloud API, no registration
+- Install as an Agent Skill (Claude Code / OpenCode / Qoder): copy or clone this repo into your skills directory and say "蒸馏这个抖音链接"
+- Requirements: Python 3.10+, [GPT-SoVITS/Qwen2.5-Omni local runtime](#) (see Chinese section for setup details)
+
+For the full setup guide, tuning notes and known pitfalls, read the Chinese documentation above — it is the authoritative, frequently updated version.
+
+
 # 方式2 · aifasthub 国内直链（快，支持断点续传，-C - 即续传）
 HF_ENDPOINT=https://aifasthub.com hf download Qwen/Qwen2.5-Omni-7B --local-dir ./Qwen2.5-Omni-7B
 # 单文件直链格式（浏览器/curl/wget 均可）：
