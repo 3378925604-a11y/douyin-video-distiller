@@ -1,0 +1,87 @@
+---
+name: douyin-video-distiller
+description: '抖音视频蒸馏 Skill。用户提供抖音链接、视频文件或要求把短视频提炼成知识卡片、摘要、时间线、证据、行动项、Wiki 内容或第二大脑资料时使用；也适用于"帮我把这个视频真正变成可检索知识"等未明确说蒸馏的请求。 English triggers: turn a Douyin or Chinese short-video link into knowledge cards, summarize a video with timestamps, extract transcript and burned-in on-screen text from a short video, distill a video into second-brain notes with evidence grading.'
+disable-model-invocation: false
+user-invocable: true
+compatibility: '需要本地 Qwen2.5-Omni-7B 权重（约 22GB，4bit 量化后 8G 显存可跑）；下载依赖 douyin-video-download skill；视频分析脚本为本 skill 自带的 scripts/analyze_omni.py。Python 依赖：torch / transformers>=4.57 / bitsandbytes / qwen-omni-utils / torchvision>=0.19 / accelerate（device_map 必需）/ audioread（qwen_omni_utils 传递依赖，国内镜像常缺、需走官方 PyPI）/ decord（视频解码后端：torchvision>=0.26 已删除 read_video，不装 decord 或 torchcodec 会直接崩）'
+---
+
+# 抖音视频蒸馏
+
+## 核心原则
+
+把视频处理成可复用知识，而不是只生成泛泛摘要。必须区分视频明确说出/展示的内容、模型归纳、用户可能需要确认的推测，并尽量保留时间戳。下载失败、视频不可访问或视觉模型不支持完整视频时，要如实报告并停止冒充已完成。**覆盖校验（强制）**：对照 `ffprobe` 拿到的视频总时长检查输出时间戳，模型没覆盖到的时间段必须显式标注"未分析"，不得把"模型没看"当成"视频里没有"；输出尾部出现复读或角色标签幻觉（`Human:` 等）时截断采信并在"待确认"注明截断点。
+
+## 输入与权限
+
+支持抖音链接、本地视频和用户提供的转录文本。链接下载需要用户已有访问权限；不绕过验证码、登录墙、访问控制或平台限制。Cookie、API Key 和账号信息只从本机安全配置读取，不显示、不写入输出、不上传到 Wiki。
+
+## 第 0 步：环境自检与分析通道选择（必做，别直接开跑）
+
+按顺序探测，走第一个能跑的通道；全部不通就向用户要转录文本，**不得凭链接内容瞎编蒸馏结果**：
+
+1. **通道 A · 本地模型**：检查环境变量 `OMNI_MODEL_PATH` 指向的目录里有没有 `config.json` + safetensors 权重，且本机有 ≥8GB 显存（`nvidia-smi`）。三者齐备 → 用 `scripts/analyze_omni.py`。缺权重 → 引用本 skill README「获取模型权重」一节的直链与命令（hf 官方 / aifasthub / hf-mirror / ModelScope 四选一），权重就绪后回到本步；缺显存 → 下一通道。
+2. **通道 B · 用户提供文本**：A 不通时，请用户粘贴抖音自带的图文转录或第三方转文字结果，走纯文本蒸馏流程（质量降级，需在输出里注明"仅基于文本，无画面证据"）。
+
+下载同理：链接一律按 `douyin-video-download` skill 里的「CDP 登录态提取法」执行（该 skill 唯一路径）；不要尝试 yt-dlp/纯 HTTP 解析/cookie 导出等已被抖音反爬淘汰的做法，用户手动给来本地视频路径则直接进分析。
+
+## 执行流程
+
+1. 判断输入类型。链接先解析并保存原始链接信息；本地视频记录文件路径、大小、时长和格式；文本直接进入转录蒸馏流程。
+2. 处理抖音链接时，调用已安装的 `douyin-video-download` skill（CDP 登录态提取法），按其文档步骤下载视频到临时目录。不要复制下载器源码，也不要输出视频签名直链、Cookie 或凭据。
+3. 本地模型没有请求体大小上限，但耗时随视频长度和采样帧率线性增长。先记录视频时长：超长视频（>3 分钟）先降低采样帧率（`--fps 0.5`），必要时再用 FFmpeg 切段（每段 ≤150 秒、`scale=720:-2`、CRF 32、AAC 64k），逐段分析后合并结果。
+4. 调用本 skill 自带的本地视觉分析脚本处理视频（fps 默认 1；**音轨默认已输入**，若该机器音轨链路依赖不全，脚本会自动降级为纯画面并在 stderr 打 `[warn]`——此时结果不含语音信息，纯画面任务可直接用 `--no-audio` 关；输出复读严重时加 `--ngram-rep 4`）：
+   ```bash
+   python "<本 skill 目录>/scripts/analyze_omni.py" "<视频文件>" "请完整分析视频并输出带时间戳的转录、画面文字、时间线、明确证据、模型归纳和待确认事项。"
+   ```
+   脚本通过 `OMNI_MODEL_PATH` 读取本地 Qwen2.5-Omni-7B 权重目录。分析结果保存为临时分析文本或 JSON，不自动写入 Wiki、Index、graph.json 或知识蛛网。Windows 下若报 `UnicodeEncodeError: 'gbk'`，先设 `PYTHONUTF8=1 PYTHONIOENCODING=utf-8` 再跑。
+5. 只有在分析成功且分析结果已保存后，才删除本次下载的临时视频文件及其临时下载目录；删除前确认路径位于本次任务临时目录内。分析失败、超时、结果为空或无法验证完整视频时，保留视频以便重试，并明确报告原因。不得删除用户原本已有的本地视频，除非用户在当前请求中明确要求删除。
+6. 获取转录和视觉证据。视频明确展示/说出的信息标为"原视频证据"；模型归纳标为"蒸馏结论"；无法核实的信息标为"待确认"。
+7. 输出时间线、关键概念、因果链、例子、反例、行动步骤和关键词。不要把单条视频观点自动升级成客观事实。
+8. 若用户明确要求写入知识库，先读取相关 Schema 和 Wiki 文件，优先更新同主题文件；来源写相对路径或原始链接，状态默认为 `draft`，等待审核。分析、下载、删除、写 Wiki 是不同动作，不能自动串联未被请求的 Wiki 写入。
+9. 完成后给出处理状态：下载、分析和清理分别是否成功；列出实际使用的输入和未完成原因。
+
+## 标准输出
+
+```markdown
+---
+title: ""
+type: learning
+topic: ""
+source:
+  - "原始抖音链接或相对文件路径"
+confidence: high | medium | low
+status: draft
+---
+
+# 标题
+
+## 一句话结论
+
+## 原视频证据
+按时间戳列出明确说出或展示的内容。
+
+## 蒸馏结论
+模型归纳出的框架、因果关系和可迁移方法。
+
+## 关键概念与关键词
+
+## 可执行行动
+
+## 待确认事项
+
+## 关联主题
+```
+
+## 失败处理
+
+- 下载失败：返回"未取得视频"，说明错误类别和下一步，不生成虚假的视频内容；不要删除任何文件。
+- 抖音反爬（只返回壳页/无视频数据）：如实报告，建议用户改用浏览器登录态方式手动获取视频后走本地视频流程。
+- 只有标题或短链接元数据：只能整理元数据，不能声称完成视频蒸馏。
+- 视频过长导致推理超时或显存不足：按执行流程第 3 步降低采样帧率或切段压缩，或如实报告未完成。**慢的先兆是输入 token 数不是视频时长**——看脚本 `[input] tokens=` 一行，十几秒的片子也可能因高分辨率喂进几千 token（缺省不压像素时 1080p 帧可达 5000+ token，慢一个数量级）。脚本已默认 `--max-pixels 100352`（=128×28²，qwen_vl_utils 的硬下限，**传低于它的值如 100000 会直接断言崩溃**）；还要更快就降 fps，不要往 100352 以下压 max_pixels。
+- **生成慢约 10 倍（<1 tok/s）**：先查上面那条的 token 数，绝大多数"GPU 假性低频"（SM 钉在 300MHz 档）其实是超大输入下的表象，token 正常后再怀疑驱动没升频（NVIDIA 控制面板设「最高性能优先」或 `nvidia-smi -lgc`，笔记本查 MUX）。
+- transformers 5.x 提示 "does not apply the per-frame pixel cap"：输入 token 会远超预期——脚本默认已传 `--max-pixels 100352` 收敛；若被改为 0/未生效，恢复默认即可（不要再传 100000 之类的值，低于 100352 会断言崩溃）。
+- 解码报 `torchvision.io has no attribute 'read_video'`：torchvision≥0.26 已删除该函数，`pip install decord` 即可（qwen_omni_utils 自动优选，无需改代码）。
+- 分析失败、超时、返回空结果或拒绝视频：保留本次下载的视频，明确说明分析未完成，不执行自动删除；如用户允许，可改为"转录 + 抽帧"并明确这不是完整视频理解。
+- 清理失败：如实报告残留文件路径，不重复删除用户原有文件。
+- 内容含个人隐私、健康、财务、密码、Cookie、API Key 或身份凭据：不上传、不输出、不写入公开 Wiki。

@@ -1,6 +1,6 @@
 ---
 name: douyin-video-distiller
-description: '抖音视频蒸馏 Skill。用户提供抖音链接、视频文件或要求把短视频提炼成知识卡片、摘要、时间线、证据、行动项、Wiki 内容或第二大脑资料时使用；也适用于"帮我把这个视频真正变成可检索知识"等未明确说蒸馏的请求。'
+description: '抖音视频蒸馏 Skill。用户提供抖音链接、视频文件或要求把短视频提炼成知识卡片、摘要、时间线、证据、行动项、Wiki 内容或第二大脑资料时使用；也适用于"帮我把这个视频真正变成可检索知识"等未明确说蒸馏的请求。 English triggers: turn a Douyin or Chinese short-video link into knowledge cards, summarize a video with timestamps, extract transcript and burned-in on-screen text from a short video, distill a video into second-brain notes with evidence grading.'
 disable-model-invocation: false
 user-invocable: true
 compatibility: '需要本地 Qwen2.5-Omni-7B 权重（约 22GB，4bit 量化后 8G 显存可跑）；下载依赖 douyin-video-download skill；视频分析脚本为本 skill 自带的 scripts/analyze_omni.py。Python 依赖：torch / transformers>=4.57 / bitsandbytes / qwen-omni-utils / torchvision>=0.19 / accelerate（device_map 必需）/ audioread（qwen_omni_utils 传递依赖，国内镜像常缺、需走官方 PyPI）/ decord（视频解码后端：torchvision>=0.26 已删除 read_video，不装 decord 或 torchcodec 会直接崩）'
